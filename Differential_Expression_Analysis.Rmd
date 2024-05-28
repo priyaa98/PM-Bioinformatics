@@ -1,0 +1,444 @@
+---
+title: "Differential Expression Analysis for Mantle Cell Lymphoma Cell Lines"
+output: pdf_document
+date: "2023-12-31"
+---
+**GOAL**
+
+To identify Differentially Expressed Genes between two groups of cells lines for Mantle Cell Lymphoma (HBL-2) - Parental Cell Line and Derived I10 Cell Line for Venetoclax Resistance.
+
+**DATA**
+
+Data used in this analysis is obtained by running QC and Quantification on the cell lines using Linux. The tools used were FastQC (quality control), TrimGalore (trimming off repeated adapter sequences) and Salmon (quantification).
+
+There 3 each of Control cell lines and Treated Cell lines. Both of them have been treated with Venetoclax with the only difference being, Control has not developed resistance whereas Treated has developed resistance to the treatment.
+
+**PRE-REQUISITES:**
+
+Packages required to run the code that follows:
+
+```{r}
+library(DESeq2)
+library(tximport)
+library(BiocParallel)
+library(ggplot2)
+library(vsn)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(ggnewscale)
+library(enrichplot)
+library(pheatmap)
+library(RColorBrewer)
+library(EnhancedVolcano)
+library(doParallel)
+```
+
+*[helper]* To ensure that our computational processes occur at a reliable speed we used the "doParallel" package to perform parallel processing. We also set the seed to reduce as much randomization as possible, so that on each run the outputs are relatively same/similar.
+
+```{r}
+##Speed up and parallelization thoughts & setting seed to avoid randomization
+cl <- makeCluster(4)
+registerDoParallel(cl)
+set.seed(100)
+```
+
+**STEPS FOR OBTAINING DIFFERENTIAL EXPRESSION**
+
+**STEP 1:** Import quantified data into R and transform it into usable DESeq datasets
+
+--> Below we set the relevant directories (to be changed based on user), input our samples.csv (file containing name of our cell lines and their category of whether they are the Controls or the Treated). 
+
+```{r}
+dir <- "C:/Users/Priyamvadha/Documents/Salmon_Quant/Quant.sf_Files/"
+samples <- read.csv(
+  "C:/Users/Priyamvadha/Documents/Salmon_Quant/Quant.sf_Files/samples.csv", 
+  header = T)
+samples$Condition <- factor(rep(c("Control", "Treated"), each=3))
+rownames(samples) <- samples$Run
+```
+
+--> We then import our salmon quantification files (retrieved from our Linux scripting) using "tximport()". The imported files are then made into meaningful DESeq Datasets using "DESeqDataSetFromTximport()".
+
+```{r}
+files <- file.path(dir, samples$Run, "quant.sf")
+tx2gene <- read.csv(
+  "C:/Users/Priyamvadha/Documents/Salmon_Quant/Quant.sf_Files/tx2gene.gencode.v44.csv", 
+  header = T)
+txi <- tximport(files, type = "salmon", tx2=tx2gene, ignoreAfterBar = T)
+ddsTxi <- DESeqDataSetFromTximport(txi, colData = samples, design = ~Condition)
+ddsTxi$Condition <- factor(ddsTxi$Condition, levels = c("Control", "Treated"))
+```
+
+**STEP 2:** Initiating Differential analysis
+
+--> Initial differential expression analysis is done by "DESeq()". To obtain results from the analysis (output of "DESeq()"), we used "results()".
+
+```{r}
+dds<- DESeq(ddsTxi)
+res <- results(dds)
+resultsNames(dds)
+```
+
+**STEP 3:** Pre-filtering data to remove unwanted values
+
+--> In this step, a filter is made to ensure transcripts that do not have any valid value in atleast 3 of the 6 samples is excluded from the data. This is to ensure no genes that have not had any change are present in the dataset as the assumption is even if it is not expressed in the control, it should be expressed in the treated (or vice-versa) for it to be considered as "differentially expressed".
+
+--> This is then again put into differential analysis and its results are stored.
+
+```{r}
+smallestGroupSize <- 3
+keep <- rowSums(counts(ddsTxi) >= 10) >= smallestGroupSize
+ddsTxi_fil <- ddsTxi[keep,]
+
+dds_fil <- DESeq(ddsTxi_fil)
+res_fil <- results(dds_fil)
+```
+
+--> To further narrow down the data, from the resulted output the adjusted p-values are used as measures to extract transcripts whose padj (adjusted p values) are less than 0.1 and less than 0.05. This is to increase the significance level of the possible differential expressions and avoid random chance.
+
+```{r}
+resOrdered <- res_fil[order(res_fil$pvalue), ]
+summary(res_fil)
+sum(res_fil$padj <0.1, na.rm=T)
+#adjusting p-value as < 0.05
+res05 <- results(dds_fil, alpha=0.05)
+summary(res05)
+sum(res05$padj<0.05, na.rm=T)
+```
+
+--> The log2 Fold Change is already present in our results from DESeq. But, raw LFC could potentially include noise. To avoid those, shrinkage estimators are used to show how drastically the data changes when noise is removed.
+
+```{r}
+##Log-fold shrinkage
+resLFC <- lfcShrink(dds_fil, coef="Condition_Treated_vs_Control", 
+                    type = "apeglm")
+#Alternative shrinkage estimators
+resNorm <- lfcShrink(dds_fil, coef=2, type = "normal")
+resAsh <- lfcShrink(dds_fil, coef=2, type = "ashr")
+
+#Comparative MA plot of pre- and post-shrinkage
+par(mfrow=c(1,2), mar=c(4,4,2,1))
+xlim <- c(1,1e5); ylim <- c(-3,3)
+plotMA(res_fil, xlim=xlim, ylim=ylim, main="Normal - Without Shrinkage ")
+plotMA(resNorm, xlim=xlim, ylim=ylim, main="Normal - With Shrinkage")
+
+#MA Plots
+par(mfrow=c(1,3), mar=c(4,4,2,1))
+plotMA(resLFC, xlim=xlim, ylim=ylim, main="apeglm")
+plotMA(resAsh, xlim=xlim, ylim=ylim, main="ashr")
+```
+*[Note: Emphasis on "apeglm" and "ashr" estimators were not made as they tend to work best for smaller datasets, which is not typically our case]*
+
+
+**EXPLORATORY DATA ANALYSIS**
+
+--> To understand the data better, mean-sd plots were created using logarithm-transformed counts.
+
+```{r}
+nrow(dds_fil)
+dds_fil<- dds_fil[rowSums(counts(dds_fil))>1, ]
+nrow(dds_fil)
+
+lambda <- 10^seq(from =-1, to=2, length=1000)
+cts<- matrix(rpois(1000*100, lambda), ncol=100)
+
+meanSdPlot(cts, ranks=F)
+#logarithm-transformed counts
+log.cts.one <- log2(cts+1)
+meanSdPlot(log.cts.one, ranks=F)
+```
+
+--> The data was also normalized using two different methods - Variance-Stabilizing Transformation and Regularized Log Transformation, and then visualized.
+
+```{r}
+##vst
+vsd <- vst(dds_fil, blind=F)
+head(assay(vsd), 3)
+##rlog
+rld <- rlog(dds_fil, blind=F)
+head(assay(rld), 3)
+vsd=vst(dds_fil, blind=FALSE)
+head(assay(vsd),3)
+# this gives log2(n + 1)
+ntd <- normTransform(dds_fil)
+#mean-sd plots
+meanSdPlot(assay(ntd))
+meanSdPlot(assay(vsd))
+```
+*[Note: To avoid loss of variance between the controls and treated and because outliers could provide significant data, normalized data was not used for final DEG computation]*
+
+--> Plot Counts were done to show the genes with minimum and maximum LFC were done to show the wide difference in values between the conditions.
+
+```{r}
+#plotcounts
+par(mfrow=c(1,1))
+#plotcount of higher expression
+plotCounts(dds_fil, gene=which.max(res_fil$log2FoldChange), 
+           intgroup="Condition")
+#plotcount of lower expression
+plotCounts(dds_fil, gene=which.min(res_fil$log2FoldChange), 
+           intgroup="Condition")
+```
+
+--> A PCA plot was also done to show the variance in the data between the conditions (for the normalized data).
+
+```{r}
+plotPCA(vsd,  intgroup=c("Condition", "Run"))
+```
+
+--> Finally, a dispersion plot was made to show the count variability that could exist within our samples for any given gene.
+
+```{r}
+plotDispEsts(dds_fil)
+```
+
+**DIFFERENTIALLY EXPRESSED GENES**
+
+1. Pre-processing for further analysis
+
+--> To ensure successful identification of DEGs, any NA values in our results were omitted and the relevant transcript IDs are mapped to their gene symbols. 
+
+--> A threshold was also made where all genes whose LFC were greater than 2 or less than -2 were extracted for further analysis using significant changes.
+
+```{r}
+#Pre-processing data to avoid NAs and then mapping them to Ensembl keys
+results_filtered = data.frame(res05)
+results_filtered= na.omit(results_filtered)
+
+results_filtered$GeneID = rownames(results_filtered)
+results_filtered=as.data.frame(results_filtered)
+
+rownames(results_filtered) = gsub("\\..*", "", rownames(results_filtered))
+results_filtered$symbol=mapIds(org.Hs.eg.db, keys=rownames(results_filtered), 
+                               keytype="ENSEMBL", column="SYMBOL")
+head(results_filtered)
+View(results_filtered)
+#extracting genes with a threshold LFC
+lo2fc = results_filtered[(
+  results_filtered$log2FoldChange >=2 | results_filtered$log2FoldChange <= -2 )& 
+    results_filtered$padj <= 0.05,]
+lo2fc=na.omit(lo2fc)
+write.csv((lo2fc), file="lo2fc.csv")
+```
+
+--> As a result, we have our total down-regulated and up-regulated genes under a threshold and a volcano plot showing genes with a high significance-high LFC.
+
+```{r}
+#SUMMARY OF ABNORMALLY REGULATED GENES
+down_regulation <- nrow(lo2fc[lo2fc$log2FoldChange<=-1,])
+print(down_regulation)
+up_regulation <- nrow(lo2fc[lo2fc$log2FoldChange>=1,])
+print(up_regulation)
+#Volcano plot
+EnhancedVolcano(results_filtered,
+                lab= results_filtered$symbol,
+                x="log2FoldChange", y="pvalue", ylim= c(0,325))
+```
+
+2. Gene-Ontology Enrichment Analysis
+
+--> As we now have a list of genes with high significance-high LFC, it is required to understand their biological relevance as not all stasticalluy significant points hold real-life relevance. To do so, we use Gene-Ontology Enrichment Analysis.
+
+--> The analysis is done using clusterProfiler's "enrichGO()". Using our data, we can tweak the function to provide us the Biological Processes (BP), Molecular Function (MF) or Cellular Component (CC) using the "ont" parameter. It is visualized using a dot plot and a bar plot.
+
+```{r}
+genes_to_test= rownames(results_filtered)
+head(genes_to_test)
+#ego plot
+ego2l = enrichGO(gene = genes_to_test,
+                 OrgDb = "org.Hs.eg.db",
+                 keyType = "ENSEMBL",
+                 ont = "BP",
+                 pAdjustMethod = "BH",
+                 pvalueCutoff = 0.2,
+                 qvalueCutoff = 0.2,
+                 readable = TRUE
+)
+dotplot(ego2l)
+fit= plot(barplot(ego2l), showCategory = 200)
+```
+
+--> We then pair them with their relevant genes according to Gene Ontology and visualize them using an enrichment map plot ("emapplot()") to show related processes, network plot ("cnetplot()") to show related processes through their genes, a graph plot ("goplot()") to show the relationships in its hierarchical manner and a tree plot ("treeplot()") to create a dendogram-structure grouping related processes together.
+
+```{r}
+#emap plot
+ego42l = enrichplot::pairwise_termsim(ego2l)
+emapplot(ego42l, showCategory = 10)
+#network plot
+par(mar=c(2,2,2,2))
+OE_foldchanges = lo2fc$log2FoldChange
+cnetplot(ego42l,
+         categorySize=lo2fc$padj,
+         layout = "kk",
+         showCategory = 3,
+         foldChange=OE_foldchanges,
+         vertex.label.font=4, max.overlaps=100)
+#graph plot
+goplot(ego2l, layout = "sugiyama", showCategory = 7)
+#tree plot
+treeplot(ego42l, showCategory=7,
+         fontsize=4, offset=30, 
+         offset_tiplab = 0.5, extend=0.2, pie="Count",
+         xlim=c(0,100))
+```
+
+-->*[helper]* We created a function to map required Transcript IDs to their corresponding Gene Symbols for further visualization. We also stored the samples and their conditions (Control or Treated) in a separate variable for the same.
+
+```{r}
+#function to find gene symbols corresponding to their Transcript IDs
+find_gene_names <-function(lo2fc, top_genes_data)
+{
+  i=0
+  j=0
+  rownames_exp = c()
+  for(i in 1:nrow(top_genes_data))
+  {
+    for(j in 1:nrow(lo2fc))
+    {
+      if(lo2fc[j,"GeneID"] == rownames(top_genes_data)[i])
+      {
+        rownames_exp <- append(rownames_exp, lo2fc[j, "symbol"])
+        j=j+1
+        i=i+1
+        break
+      }
+    }
+  }
+  return(rownames_exp)
+}
+#samples and conditions
+df=as.data.frame(colData(dds_fil))
+df$Run <- NULL
+```
+
+**RESULTS**
+
+1. Representation of top 10 down-regulated genes using a heatmap:
+
+```{r}
+#top 10 genes with decreased differential expression
+top_genes_low_exp <- head(lo2fc[order(lo2fc$log2FoldChange), ], 10)
+top_genes_data_low_exp <- assay(dds_fil)[rownames(assay(dds_fil)) %in%
+                                           top_genes_low_exp$GeneID, ]
+rownames_low <- c()
+rownames_low <- find_gene_names(lo2fc, top_genes_data_low_exp)
+rownames(top_genes_data_low_exp) <- rownames_low
+pheatmap(top_genes_data_low_exp, 
+         main = "Top 10 Differentially Expressed Genes - Low Expression", 
+         scale = "row", annotation_col = df)
+```
+
+2. Representation of top 10 up-regulated genes using a heatmap:
+
+```{r}
+#top 10 genes with increased differential expression
+top_genes_hi_exp <- head(lo2fc[order(lo2fc$log2FoldChange, decreasing = TRUE), ]
+                         , 10)
+top_genes_data_hi_exp <- assay(dds_fil)[rownames(assay(dds_fil)) %in% 
+                                          top_genes_hi_exp$GeneID, ]
+rownames_hi_exp <- c()
+rownames_hi_exp <- find_gene_names(lo2fc, top_genes_data_hi_exp)
+rownames(top_genes_data_hi_exp) <- rownames_hi_exp
+pheatmap(top_genes_data_hi_exp, 
+         main = "Top 10 Differentially Expressed Genes - High Expression", 
+         scale = "row", annotation_col = df)
+```
+
+3. Overall Representations:
+
+3.1. Heatmap of highly Differentially Expressed Genes (with fold in variation):
+
+```{r}
+#combined overall data
+trial_deg <- rbind(top_genes_data_hi_exp, top_genes_data_low_exp)
+pheatmap(trial_deg, main = "Top 20 Differentially Expressed Genes", 
+         scale = "row", annotation_col = df, cluster_cols = FALSE, 
+         treeheight_row = 50, display_numbers = TRUE,  
+         color = colorRampPalette(c("lightblue4","skyblue","lightblue1", "white",
+                                    "lightyellow","yellow2","orange"))(200))
+```
+
+3.2. Bar plot of highly Differentially Expressed Genes (LFC threshold - >6 and <-6):
+
+```{r}
+##bar plot of highly differentiated geens with a -6<=log2 fold change<=6
+log2fold_greaterthan6 <- head(lo2fc[order((lo2fc$log2FoldChange), 
+                                          decreasing = TRUE), ], 10)
+log2fold_greaterthan6 <- log2fold_greaterthan6[log2fold_greaterthan6$log2FoldChange>=6.0, ]
+
+log2fold_lessthan_6 <- head(lo2fc[order((lo2fc$log2FoldChange), 
+                                        decreasing = FALSE), ], 10)
+log2fold_lessthan_6 <- log2fold_lessthan_6[log2fold_lessthan_6$log2FoldChange<=-6.0, ]
+
+top_genes <- rbind(log2fold_greaterthan6, log2fold_lessthan_6)
+Upregulated_Downregulated <-factor(sign(top_genes$log2FoldChange))
+  
+ggplot(top_genes, aes(x = symbol, y = log2FoldChange, 
+                     fill = Upregulated_Downregulated)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Top 20 DEGs", x = "Gene", y = "log2 Fold Change")+
+  scale_fill_manual(values=c("cyan3", 
+                             "red3"))
+```
+
+4. Prioritized genes
+
+--> Finally, based on our manual analysis and research behind these DEGs, 12 genes were narrowed down to have some involvement with the immune system, cell chemotaxis or Apoptosis which may play a role in cancers and B-cell biology. They were then visualized to show their specific differentiation between controls and treatment samples. Firther research on their practical involvement to be done manually.
+
+-->*[helper]* We made a function to extract data of the 12 genes of interest and their metadata such as p-value (adjusted), LFC etc,.
+
+```{r}
+##priority genes based on validated relevant biological processes
+priority_genes <- c("MALT1", "TNFRSF11A", "CAMK4", "HOXB9", 
+                    "TIAM1", "PCDHGC4", "CD4", "ANXA1", 
+                    "IGLC6","IGLC7", "FYB1", "IGLC1")
+
+# Create an empty data frame with the same number of columns
+priority_gene_data = data.frame(
+  matrix(ncol = ncol(lo2fc), nrow = 12),
+  stringsAsFactors = TRUE
+)
+colnames(priority_gene_data) <- colnames(lo2fc)
+#function for extracting genes-of-interest's metadata
+extract_priority_data <- function(priority_genes, lo2fc)
+{
+  i=0
+  j=0
+  for(i in 1:length(priority_genes))
+  {
+    for(j in 1: nrow(lo2fc))
+    {
+      if(lo2fc[j, "symbol"] == priority_genes[i])
+      {
+        rownames(priority_gene_data)[i] <- rownames(lo2fc)[j]
+        priority_gene_data <- rbind(priority_gene_data, lo2fc[j, ])
+        break
+      }
+    }
+  }
+  return(priority_gene_data)
+}
+priority_gene_data <- extract_priority_data(priority_genes, lo2fc)
+#Avoiding any NA values
+priority_gene_data <- na.omit(priority_gene_data)
+
+Upregulated_Downregulated <-factor(sign(priority_gene_data$log2FoldChange))
+#bar plot of differentiation
+ggplot(priority_gene_data, aes(x = symbol, y = log2FoldChange, 
+                               fill = Upregulated_Downregulated)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "Top 12 DEGs with relevant biological significance", x = "Gene", 
+       y = "log2 Fold Change")+
+  scale_fill_manual(values=c("cyan3", 
+                             "red3"))
+```
+
+-->*[helper]* As we have intiated parallel processing at the beginning of this code, we also end it to ensure no workers are running in the background.
+
+```{r}
+#stop parallel computing
+stopCluster(cl)
+```
+
