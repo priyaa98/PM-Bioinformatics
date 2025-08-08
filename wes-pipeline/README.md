@@ -1,6 +1,6 @@
 # Whole Exome Sequencing (WES) Pipeline
 
-This folder contains a **complete** whole exome sequencing (WES) pipeline for human variant discovery, annotation, and filtering.  
+This folder contains a **skeleton** whole exome sequencing (WES) pipeline for human variant discovery, annotation, and filtering.  
 It is intended to be run **with your own sequencing data** and the appropriate reference and annotation resources.
 
 ## Overview
