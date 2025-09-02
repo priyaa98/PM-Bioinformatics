@@ -42,3 +42,12 @@ This folder contains the **Differential Expression (DE) workflow** used for our 
      - Volcano plot
      - Top-gene heatmaps  
   6. Functional annotation with **clusterProfiler** (GO enrichment for BP/MF/CC)
+
+## 3. Usage
+
+This folder contains:
+- **[`report.pdf`](./report.pdf)** — the complete analysis with results and figures.  
+- **`scripts/`** — minimal R scripts that reproduce the main steps (load data, run DESeq2, generate plots, run GO enrichment).
+
+> ⚠️ Scripts are provided as **skeletons**: they assume you provide your own data (Salmon `quant.sf` files or counts + metadata).  
+> The PDF contains the final outputs; no plots are generated separately here.
