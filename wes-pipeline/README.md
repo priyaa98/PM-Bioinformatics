@@ -61,3 +61,25 @@ The pipeline was developed and tested between **February 2024** and **September 
 
 > ⚠️ If you use newer versions of these tools or resources, some command-line options or output formats may change.  
 > Adjust the workflow scripts accordingly.
+
+---
+
+## Citations
+
+Please cite the following tools and resources if you use this pipeline:
+
+- **BWA-MEM** — Li H. (2013) *Aligning sequence reads, clone sequences and assembly contigs with BWA-MEM*. arXiv:1303.3997  
+- **SAMtools / BCFtools** — Danecek P et al. (2021) *Twelve years of SAMtools and BCFtools*. GigaScience 10(2):giab008  
+- **Picard Toolkit** — Broad Institute (2019) *Picard Toolkit*. Broad Institute GitHub  
+- **Trim Galore** — Krueger F. (2015) *Trim Galore: A wrapper tool around Cutadapt and FastQC to apply adapter and quality trimming consistently*  
+- **GATK (Genome Analysis Toolkit)** — Van der Auwera GA et al. (2013) *GATK best practices workflow: From FastQ to high-confidence variant calls*. Curr Protoc Bioinformatics 43:11.10.1–11.10.33  
+- **VEP (Variant Effect Predictor)** — McLaren W et al. (2016) *Ensembl Variant Effect Predictor*. Genome Biology 17:122  
+- **CADD** — Rentzsch P et al. (2019) *CADD: predicting deleteriousness of variants across the human genome*. Nucleic Acids Res 47(D1):D886–D894  
+- **REVEL** — Ioannidis NM et al. (2016) *REVEL: Ensemble method predicting pathogenicity of rare missense variants*. Am J Hum Genet 99(4):877–885  
+- **AlphaMissense** — Varley T et al. (2023) *AlphaMissense: deep learning pathogenicity predictions for missense variants*. Science 381(6660):eadg7492  
+- **UTRAnnotator** — Whiffin N et al. (2020) *Loss-of-function impact of 5′UTR variants in 15,708 individuals*. Nat Commun 11:2523  
+- **gnomAD** — Karczewski KJ et al. (2020) *Mutational constraint spectrum from variation in 141,456 humans*. Nature 581:434–443  
+- **ClinVar** — Landrum MJ et al. (2020) *ClinVar: improvements to accessing data*. Nucleic Acids Res 48(D1):D835–D844  
+- **VASE** — Parry DA. (2022) *VASE: Variant Annotation, Segregation and Exclusion for family- or cohort-based rare-disease sequencing studies.* Available on GitHub: https://github.com/david-a-parry/vase
+
+Please also cite the Broad Institute resource bundle if you use their reference genome, BED files, or known-sites VCFs.
